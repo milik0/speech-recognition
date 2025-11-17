@@ -7,7 +7,7 @@ from models.MFCC import _MFCC
 from models.MLP import MLP
 from models.CNN import CNN
 from models.GRU import GRU
-from models.Transformers import Transformer
+ adfrom models.Transformers import Transformer
 
 # Model selection parameter - change this to 'MLP', 'CNN', 'GRU', or 'Transformer'
 MODEL_TYPE = 'CNN'  # Options: 'MLP', 'CNN', 'GRU', 'Transformer'
