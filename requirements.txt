@@ -14,9 +14,6 @@ torchvision
 # Optional: Transformers (for Transformer ASR experiments)
 transformers
 
-# CTC utilities
-ctcdecode
-
 # Hyperparameter tuning
 optuna
 hyperopt
@@ -24,7 +21,6 @@ keras-tuner
 
 # Utilities
 tqdm
-scikit-learn
 
 # Optional audio augmentations
 audiomentations
