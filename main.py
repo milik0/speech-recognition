@@ -1,7 +1,7 @@
 import os
 from pipeline.train import train_model
 
-def load_data(batch_size=8, num_workers=2, model_type='CNN'):
+def load_data(batch_size=8, num_workers=2, model_type='Transformer'):
     """
     Train a speech recognition model
     
@@ -14,4 +14,4 @@ def load_data(batch_size=8, num_workers=2, model_type='CNN'):
     train_model(batch_size, num_workers, model_type=model_type)
 
 if __name__ == "__main__":
-    load_data(batch_size=8, num_workers=2, model_type='CNN')
+    load_data(batch_size=8, num_workers=2, model_type='Transformer')
