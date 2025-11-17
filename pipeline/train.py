@@ -5,6 +5,10 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from models.MFCC import _MFCC
 from models.MLP import MLP
+from models.CNN import CNN
+
+# Model selection parameter - change this to 'MLP' or 'CNN'
+MODEL_TYPE = 'CNN'  # Options: 'MLP' or 'CNN'
 
 def collate_fn(batch):
     """Custom collate function to handle variable-length audio"""
@@ -34,18 +38,32 @@ def manage_data(batch_size, num_workers):
     )
     return train_loader
 
-def train_model(batch_size, num_workers, num_epochs=1, save_path='model_checkpoint.pth'):
+def train_model(batch_size, num_workers, num_epochs=1, save_path='model_checkpoint.pth', model_type=MODEL_TYPE):
 
     train_loader = manage_data(batch_size, num_workers)
     
-    # 13 => Corresponds to the shape of the num_frames
-    # 128 => is arbitrary 
-    # 29 => corresponds to a-z, " ", "'" characters corresponding to the possible outputs
-    model = MLP(input_size=13, hidden_size=128, output_size=29)
+    # Initialize model based on type
+    if model_type == 'MLP':
+        # 13 => Corresponds to the shape of the MFCC features
+        # 128 => is arbitrary 
+        # 29 => corresponds to a-z, " ", "'" characters corresponding to the possible outputs
+        model = MLP(input_size=13, hidden_size=128, output_size=29)
+        print(f"Using MLP model")
+    elif model_type == 'CNN':
+        # n_classes=29 for a-z, " ", "'"
+        # n_mels=40 for mel spectrogram (or 13 if using MFCC)
+        model = CNN(n_classes=29, n_mels=40)
+        print(f"Using CNN model")
+    else:
+        raise ValueError(f"Unknown model_type: {model_type}. Choose 'MLP' or 'CNN'")
+    
     model.train(True)
     
     # Better optimizer settings
     optimizer = torch.optim.Adam(model.parameters(), lr=3e-4)
+    
+    # CTC loss function (shared by both models)
+    ctc_loss = torch.nn.CTCLoss(blank=28, zero_infinity=True)
     
     char2idx = {c: i for i, c in enumerate("abcdefghijklmnopqrstuvwxyz '")}
     
@@ -62,17 +80,42 @@ def train_model(batch_size, num_workers, num_epochs=1, save_path='model_checkpoi
             
             # Prepare batch data
             for i, (waveform, sample_rate) in enumerate(zip(waveforms, sample_rates)):
-                mfcc = _MFCC(waveform, sample_rate)
-                mfcc = mfcc.squeeze(0).transpose(0, 1)  # [time_frames, 13]
+                # Generate features based on model type
+                if model_type == 'MLP':
+                    # Use MFCC for MLP: [time_frames, 13]
+                    features = _MFCC(waveform, sample_rate)
+                    features = features.squeeze(0).transpose(0, 1)  # [time_frames, 13]
+                elif model_type == 'CNN':
+                    # Use Mel Spectrogram for CNN: [1, time_frames, n_mels]
+                    mel_spec_transform = torchaudio.transforms.MelSpectrogram(
+                        sample_rate=sample_rate,
+                        n_mels=40,
+                        n_fft=400,
+                        hop_length=80
+                    )
+                    features = mel_spec_transform(waveform)  # [1, n_mels, time]
+                    features = features.clamp(min=1e-9).log2()  # log scale
+                    features = features.unsqueeze(0)  # [1, 1, n_mels, time]
                 
                 target = torch.tensor([char2idx[c] for c in transcripts[i].lower() if c in char2idx])
                 
                 # CRITICAL: Check sequence lengths
-                if mfcc.size(0) <= len(target):
-                    print(f"Skipping sample {i}: input_len={mfcc.size(0)}, target_len={len(target)}")
+                if model_type == 'MLP':
+                    input_len = features.size(0)
+                else:  # CNN
+                    input_len = features.size(-1) // 8  # CNN reduces time by 8x due to pooling
+                
+                if input_len <= len(target):
+                    print(f"Skipping sample {i}: input_len={input_len}, target_len={len(target)}")
                     continue
                 
-                logits = model(mfcc)  # [time_frames, output_size]
+                # Forward pass
+                if model_type == 'MLP':
+                    logits = model(features)  # [time_frames, output_size]
+                else:  # CNN
+                    logits = model(features)  # [1, time_frames', output_size]
+                    logits = logits.squeeze(0)  # [time_frames', output_size]
+                
                 log_probs = F.log_softmax(logits, dim=1)
                 
                 batch_log_probs.append(log_probs)
@@ -97,7 +140,7 @@ def train_model(batch_size, num_workers, num_epochs=1, save_path='model_checkpoi
             
             # Single backward pass per batch
             optimizer.zero_grad()
-            loss = model.loss(padded_log_probs, concatenated_targets, input_lengths, target_lengths)
+            loss = ctc_loss(padded_log_probs, concatenated_targets, input_lengths, target_lengths)
             
             if torch.isnan(loss):
                 print(f"NaN loss detected at batch {batch_idx}")

@@ -1,12 +1,17 @@
 import os
 from pipeline.train import train_model
 
-def load_data(batch_size=8, num_workers=2):
+def load_data(batch_size=8, num_workers=2, model_type='CNN'):
+    """
+    Train a speech recognition model
+    
+    """
+    print(f"Starting training with {model_type}")
     print("Downloading data")
 
     os.makedirs("data", exist_ok=True)
     # Use 'dev-clean' for testing, 'train-clean-100' for training
-    train_model(batch_size, num_workers)
+    train_model(batch_size, num_workers, model_type=model_type)
 
 if __name__ == "__main__":
-    load_data()
+    load_data(batch_size=8, num_workers=2, model_type='CNN')
