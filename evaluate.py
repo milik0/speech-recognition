@@ -1,9 +1,11 @@
 import torch
 import torch.nn.functional as F
+import torchaudio
 from torchaudio.datasets import LIBRISPEECH
 from torch.utils.data import DataLoader
 from models.MFCC import _MFCC
 from models.MLP import MLP
+from models.CNN import CNN
 from pipeline.train import collate_fn
 import Levenshtein
 
@@ -44,7 +46,7 @@ def calculate_cer(reference, hypothesis):
     cer = distance / len(reference)
     return cer
 
-def evaluate_model(model, dataloader, device='cpu', num_samples=None):
+def evaluate_model(model, dataloader, model_type='MLP', device='cpu', num_samples=None):
     """Evaluate the model on a dataset"""
     model.eval()
     model.to(device)
@@ -65,12 +67,27 @@ def evaluate_model(model, dataloader, device='cpu', num_samples=None):
     with torch.no_grad():
         for batch_idx, (waveforms, sample_rates, transcripts, _, _, _) in enumerate(dataloader):
             for i, (waveform, sample_rate, transcript) in enumerate(zip(waveforms, sample_rates, transcripts)):
-                # Process audio
-                mfcc = _MFCC(waveform, sample_rate)
-                mfcc = mfcc.squeeze(0).transpose(0, 1).to(device)  # [time_frames, 13]
+                # Process audio based on model type
+                if model_type == 'MLP':
+                    features = _MFCC(waveform, sample_rate)
+                    features = features.squeeze(0).transpose(0, 1).to(device)  # [time_frames, 13]
+                elif model_type == 'CNN':
+                    mel_spec_transform = torchaudio.transforms.MelSpectrogram(
+                        sample_rate=sample_rate,
+                        n_mels=40,
+                        n_fft=400,
+                        hop_length=160
+                    )
+                    features = mel_spec_transform(waveform)
+                    features = features.log2()
+                    features = features.unsqueeze(0).to(device)  # [1, 1, n_mels, time]
+                else:
+                    raise ValueError(f"Unknown model_type: {model_type}")
                 
                 # Get predictions
-                logits = model(mfcc)  # [time_frames, output_size]
+                logits = model(features)
+                if model_type == 'CNN':
+                    logits = logits.squeeze(0)  # [time_frames', output_size]
                 log_probs = F.log_softmax(logits, dim=1)
                 
                 # Decode
@@ -109,8 +126,16 @@ def evaluate_model(model, dataloader, device='cpu', num_samples=None):
     
     return avg_wer, avg_cer
 
-def load_and_evaluate(model_path=None, batch_size=8, num_workers=2, num_samples=50):
-    """Load a trained model and evaluate it"""
+def load_and_evaluate(model_path=None, model_type='MLP', batch_size=8, num_workers=2, num_samples=50):
+    """Load a trained model and evaluate it
+    
+    Args:
+        model_path: Path to saved model weights
+        model_type: Model architecture ('MLP', 'CNN', 'VGG11', 'VGG13', 'VGG16', 'VGG19')
+        batch_size: Batch size for evaluation
+        num_workers: Number of data loading workers
+        num_samples: Number of samples to evaluate
+    """
     # Load dataset
     eval_dataset = LIBRISPEECH("./data", url="dev-clean", download=True)
     eval_loader = DataLoader(
@@ -121,20 +146,30 @@ def load_and_evaluate(model_path=None, batch_size=8, num_workers=2, num_samples=
         collate_fn=collate_fn
     )
     
-    # Initialize model
-    model = MLP(input_size=13, hidden_size=128, output_size=29)
+    # Initialize model based on type
+    print(f"Initializing {model_type} model...")
+    if model_type == 'MLP':
+        model = MLP(input_size=13, hidden_size=128, output_size=29)
+    elif model_type == 'CNN':
+        model = CNN(n_classes=29, n_mels=40)
+    else:
+        raise ValueError(f"Unknown model type: {model_type}")
     
     # Load trained weights if provided
     if model_path:
         print(f"Loading model from {model_path}")
-        model.load_state_dict(torch.load(model_path))
+        model.load_state_dict(torch.load(model_path, map_location='cpu'))
     else:
         print("Warning: Evaluating untrained model (random weights)")
     
     # Evaluate
-    wer, cer = evaluate_model(model, eval_loader, num_samples=num_samples)
+    wer, cer = evaluate_model(model, eval_loader, model_type=model_type, num_samples=num_samples)
     
     return wer, cer
 
 if __name__ == "__main__":
-    load_and_evaluate(num_samples=20)
+    load_and_evaluate(
+        model_path='model_checkpoint.pth',
+        model_type='CNN',
+        num_samples=20
+    )
