@@ -21,6 +21,8 @@ keras-tuner
 
 # Utilities
 tqdm
+python-Levenshtein
 
 # Optional audio augmentations
 audiomentations
+torchcodec

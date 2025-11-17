@@ -1,17 +1,28 @@
-import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader, TensorDataset
+import torchaudio
 
 class MLP(nn.Module):
-    def __init__(self, input_size=10, hidden_size=50, output_size=1):
+    def __init__(self, input_size=13, hidden_size=256, output_size=29, num_layers=3):
         super(MLP, self).__init__()
-        self.hidden = nn.Linear(input_size, hidden_size)
-        self.relu = nn.ReLU()
-        self.output = nn.Linear(hidden_size, output_size)
-
+        
+        layers = []
+        layers.append(nn.Linear(input_size, hidden_size))
+        layers.append(nn.ReLU())
+        layers.append(nn.Dropout(0.2))
+        
+        for _ in range(num_layers - 2):
+            layers.append(nn.Linear(hidden_size, hidden_size))
+            layers.append(nn.ReLU())
+            layers.append(nn.Dropout(0.2))
+        
+        layers.append(nn.Linear(hidden_size, output_size))
+        
+        self.network = nn.Sequential(*layers)
+        self.loss_fn = nn.CTCLoss(blank=28, zero_infinity=True)
     
     def forward(self, x):
-        x = self.hidden(x)
-        x = self.relu(x)
-        x = self.output(x)
-        return x
+        return self.network(x)
+    
+    def loss(self, log_probs, targets, input_lengths, target_lengths):
+        return self.loss_fn(log_probs, targets, input_lengths, target_lengths)
+    
